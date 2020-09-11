@@ -55,12 +55,12 @@ message("SOURCES " $$SOURCES)
 message("===========================================")
 
 
-LIBS += -LC:\Android\projects\FisGo_Qt\testAppOldUi\libs\curl29sdk\curl-armeabi-v7a\lib -lcurl \
-        -LC:\Android\projects\FisGo_Qt\testAppOldUi\libs\curl29sdk\nghttp2-armeabi-v7a\lib -lnghttp2 \
-        -LC:\Android\projects\FisGo_Qt\testAppOldUi\libs\curl29sdk\curl-armeabi-v7a\lib -lcrypto.1.1 \
-        -LC:\Android\projects\FisGo_Qt\testAppOldUi\libs\curl29sdk\openssl-armeabi-v7a\lib -lssl.1.1 \
-        -LC:\Android\projects\FisGo_Qt\testAppOldUi\libs\armeabi-v7a\qFisGoPirit -lqFisGoPirit \
-        -LC:\Android\projects\FisGo_Qt\testAppOldUi\libs\armeabi-v7a\qFisGoLogDb -lQFisGoLogDb
+LIBS += -L$$PWD/libs/curl29sdk/curl-armeabi-v7a/lib -lcurl \
+        -L$$PWD/libs/curl29sdk/nghttp2-armeabi-v7a/lib -lnghttp2 \
+        -L$$PWD/libs/curl29sdk/curl-armeabi-v7a/lib -lcrypto.1.1 \
+        -L$$PWD/libs/curl29sdk/openssl-armeabi-v7a/lib -lssl.1.1 \
+        -L$$PWD/libs/armeabi-v7a/qFisGoPirit -lqFisGoPirit \
+        -L$$PWD/libs/armeabi-v7a/qFisGoLogDb -lQFisGoLogDb
 
 message("LIBS " $$LIBS)
 message("===========================================")
@@ -110,10 +110,12 @@ message("===========================================")
 
 contains(ANDROID_TARGET_ARCH,armeabi-v7a) {
     ANDROID_EXTRA_LIBS = \
-        C:/Android/projects/FisGo_Qt/testAppOldUi/libs/armeabi-v7a/qFisGoPirit/libqFisGoPirit.so \
-        C:/Android/projects/FisGo_Qt/testAppOldUi/libs/armeabi-v7a/qFisGoLogDb/libQFisGoLogDb.so \
-        C:/Android/projects/FisGo_Qt/testAppOldUi/libs/curl29sdk/curl-armeabi-v7a/lib/libcurl.so \
-        C:/Android/projects/FisGo_Qt/testAppOldUi/libs/curl29sdk/nghttp2-armeabi-v7a/lib/libnghttp2.so \
-        C:/Android/projects/FisGo_Qt/testAppOldUi/libs/curl29sdk/openssl-armeabi-v7a/lib/libcrypto.1.1.so  \
-        C:/Android/projects/FisGo_Qt/testAppOldUi/libs/curl29sdk/openssl-armeabi-v7a/lib/libssl.1.1.so
+        $$PWD/libs/armeabi-v7a/qFisGoPirit/libqFisGoPirit.so \
+        $$PWD/libs/armeabi-v7a/qFisGoLogDb/libQFisGoLogDb.so \
+        $$PWD/libs/curl29sdk/curl-armeabi-v7a/lib/libcurl.so \
+        $$PWD/libs/curl29sdk/nghttp2-armeabi-v7a/lib/libnghttp2.so \
+        $$PWD/libs/curl29sdk/openssl-armeabi-v7a/lib/libcrypto.1.1.so  \
+        $$PWD/libs/curl29sdk/openssl-armeabi-v7a/lib/libssl.1.1.so
 }
+
+ANDROID_ABIS = armeabi-v7a

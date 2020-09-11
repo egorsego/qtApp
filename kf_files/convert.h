@@ -22,7 +22,7 @@
 #include <limits.h>
 
 #include "../loggerdaemon.h"
-#include "/libs/armeabi-v7a/qFisGoPirit/PiritLib.h"
+#include "libs/armeabi-v7a/qFisGoPirit/PiritLib.h"
 
 using namespace std;
 

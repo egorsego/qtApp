@@ -5,8 +5,8 @@
 #ifndef FISCAT_FISGO_BIOS_H
 #define FISCAT_FISGO_BIOS_H
 
-#include "/libs/armeabi-v7a/qFisGoPirit/pirit_low_func.h"
-#include "/libs/armeabi-v7a/qFisGoPirit/PiritLib.h"
+#include "libs/armeabi-v7a/qFisGoPirit/pirit_low_func.h"
+#include "libs/armeabi-v7a/qFisGoPirit/PiritLib.h"
 
 #include "convert.h"
 #include "config.h"

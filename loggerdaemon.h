@@ -5,7 +5,7 @@
 #include <QDebug>
 #include <QStandardPaths>
 
-#include "/libs/armeabi-v7a/qFisGoLogDb/logdb_c_cpp.h"
+#include "libs/armeabi-v7a/qFisGoLogDb/logdb_c_cpp.h"
 
 
 #define logINFO( fmt, ... ) logINFO_c( REG_COMMON, fmt, ##__VA_ARGS__ )
