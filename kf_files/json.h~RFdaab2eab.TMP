@@ -1,0 +1,1753 @@
+/*
+ * json.h
+ */
+
+#ifndef SRC_APPL_INCLUDE_JSON_H_
+#define SRC_APPL_INCLUDE_JSON_H_
+
+#include <sys/time.h>
+
+#include <string>
+#include <cstdint>
+#include <iostream>
+
+#include "config.h"
+#include "license.h"
+#include "jsonParser.h"
+#include "convert.h"
+#include "filesfg.h"
+
+//#include "../boost/property_tree/ptree.hpp"
+//#include "../boost/property_tree/json_parser.hpp"
+
+#include <boost/property_tree/ptree.hpp>
+#include <boost/property_tree/json_parser.hpp>
+#include <boost/regex.hpp>
+
+//#include <boost/foreach.hpp>
+//#include <boost/optional/optional.hpp>
+
+
+using namespace std;
+using JsonParser = nlohmann::json;
+
+enum CAB_ERRORS
+{
+	CAB_OK              =   0x00, // Запрос выполнен успешно
+	CAB_NEED_REGISTERED =   0x01, // Касса не зарегистрирована
+	CAB_NEED_HANDSHAKE  =   0x02, // Кассе необходимо выполнить handshake и повторить запрос
+	CAB_NEED_UPDATE     =   0x03, // Необходимо обновить кассу
+	CAB_USER_FAILURE    =   0x04, // Ошибка пользователя (неправильный пин при регистрации, etc.)
+	CAB_REQUEST_FAILURE =   0x05, // Запрос получен сервером, но не может быть обработан (запрос не корректный)
+	NET_ERROR           =   0x06, // Запрос получен сервером, но не может быть обработан (запрос не корректный)
+	CAB_OTHER_ERR       =   0xBB,
+	CAB_CRITICAL_ERROR  =   0xFF
+};
+
+enum JSON_ERRORS
+{
+	JSON_NO_ERROR       = 0x00,
+	JSON_OTHER_ERR      = 0xAA,
+	JSON_LENGTH_ERR     = 0xAF,
+    JSON_INCORRECT_ERR  = 0xFA,
+	JSON_CRIRICAL_ERROR = 0xFF
+};
+
+#define FMT_STR                              " %-17s %15s "
+#define FMT_LLU                            " %-17s %15llu "
+#define FMT_FLOAT                            " %-17s %15f "
+
+#define BIND_PRODUCT_TYPE                    "bind_product"
+#define DELETE_PRODUCT_TYPE                "delete_product"
+#define UPSERT_PRODUCT_TYPE                "upsert_product"
+#define UPSERT_DISCOUNT_TYPE              "upsert_discount"
+#define DELETE_DISCOUNT_TYPE              "delete_discount"
+#define EXTERNAL_PURCHASE_TYPE          "external_purchase"
+#define KEY_ACTIVATION_TYPE                "key_activation"
+#define REGISTRATION_TASK                    "registration"
+#define PURCHASE_DOCUMENT_RESULT "purchase_document_result"
+#define UPSERT_CASHIER                     "upsert_cashier"
+#define DELETE_CASHIER                     "delete_cashier"
+#define UPDATE_MRP_TABLES               "update_mrp_tables"
+//=================================================================
+//                  Возможные коды ответов
+//=================================================================
+#define _OK_                                  "OK"
+#define NO_CLOUD_SIGN              "NO_CLOUD_SIGN" // У пользователя нет облачной подписи,
+                                                   // необходимо выполнить регистрацию в обычном режиме
+#define _ERROR_                            "ERROR"
+#define WAITING                          "WAITING" // Заявление/отчет о регистрации обрабатывается в ФНС,
+                                                   // касса должна ждать
+#define REGISTERED                    "REGISTERED" // Касса зарегистрирована, отчет о регистрации получен ОФД и подписан.
+                                                   // Больше ничего делать не требуется
+#define NEED_REPORT                  "NEED_REPORT" // Заявление получено и подписано, выдан РНМ (kkt_registration_info/registry_number).
+                                                   // Необходимо напечатать отчет о регистрации (если еще не напечатан),
+                                                   // отправить его в ОФД и ждать смены статуса.
+#define NEED_CLOUD_SIGN          "NEED_CLOUD_SIGN" // Заявление на регистрацию/отчет о регистрации приняты,
+                                                   // требуется подписать через облачную подпись (отправить код из смс)
+#define NOT_REGISTERED            "NOT_REGISTERED" // Касса не зарегистрирована в ОФД. Необходимо выполнить ofd_register
+#define INVALID_CODE                "INVALID_CODE" // Введен неправильный код
+//=================================================================
+#include "jsonParser.h"
+
+
+#ifdef DREAMKAS_RF
+    #define KKT_REGISTRY_NAME "Касса Ф"
+#elif defined(SPUTNIK_F)
+    #define KKT_REGISTRY_NAME "Спутник Ф"
+#elif defined(DREAMKAS_RB)
+    #define KKT_REGISTRY_NAME "Касса РБ"
+#endif
+
+using JsonParser      =  nlohmann::json;
+
+enum E_JSON
+{
+	JSON_RESULT                  = 1,  //Результат
+	JSON_UPDATE                  = 2,  //Обновление
+	JSON_RESULT_INT              = 3,  //Результат
+	JSON_KKT_REGISTR             = 4,  //Регистрация ККТ
+	JSON_POLL                    = 5,  //Загрузка товара
+	JSON_OFD_REGISTER            = 6,  // Заявка на регистрацию в ОФД
+	JSON_OFD_REGISTRATION_STATUS = 7,  // Статус регистрации ОФД
+	JSON_OFD_SIGN                = 8   // Подпись документа
+};
+
+struct JSONUpdateStr
+{
+	   string version;
+	   string url;
+	   string md5;
+	   int status;
+	   long fileSize;
+};
+
+struct JSONUpdate
+{
+       JSONUpdate();
+	   JSONUpdate           (const JSONUpdate& ) = delete;
+       JSONUpdate& operator=(const JSONUpdate& );
+       char version[20];
+	   char url[400];
+	   char md5[80];
+	   int status;
+	   long fileSize;
+};
+
+
+struct JSONResult
+{
+       int result = 0;
+};
+
+struct JSONKKTRegInfoStr
+{
+	   string organizationName;
+	   string address;
+	   string realAddress;
+	   string inn;
+       std::string kpp;
+       int cashNumber       = 0;
+	   string regNumber;
+	   //taxes
+       bool isAutonomicMode = false;
+       string ofdName;
+       string ofdServerHost;
+       int ofdServerPort    = 0;
+       string ofdInn;
+       string ofdUrl;
+       string senderEmail;
+       //workMode
+       int result           = 0;
+};
+
+
+struct JSONKKTRegInfo
+{
+    JSONKKTRegInfo(){}
+    JSONKKTRegInfo(const JSONKKTRegInfo &regInfo)
+    {
+        if (this != &regInfo)
+        {
+            memcpy(organization_name, regInfo.organization_name, sizeof(organization_name));
+            memcpy(calculation_address, regInfo.calculation_address, sizeof(calculation_address));
+            memcpy(calculation_place, regInfo.calculation_place, sizeof(calculation_place));
+            memcpy(organization_inn, regInfo.organization_inn, sizeof(organization_inn));
+            memcpy(kkt_reg_num, regInfo.kkt_reg_num, sizeof(kkt_reg_num));
+            memcpy(ofd_name, regInfo.ofd_name, sizeof(ofd_name));
+            memcpy(ofd_server_address, regInfo.ofd_server_address, sizeof(ofd_server_address));
+            ofd_server_port = regInfo.ofd_server_port;
+            memcpy(ofd_inn, regInfo.ofd_inn, sizeof(ofd_inn));
+            memcpy(check_receipt_address, regInfo.check_receipt_address, sizeof(check_receipt_address));
+            isAutonomicMode = regInfo.isAutonomicMode;
+            memcpy(senderEmail, regInfo.senderEmail, sizeof(senderEmail));
+            tax_systems = regInfo.tax_systems;
+            encryption_sign   = regInfo.encryption_sign;
+            excisable_sign    = regInfo.excisable_sign;
+            clc_services_sign = regInfo.clc_services_sign;
+            gambling_sign     = regInfo.gambling_sign;
+            lottery_sign      = regInfo.lottery_sign;
+            paying_agent_sign = regInfo.paying_agent_sign;
+            bso               = regInfo.bso;
+            internet          = regInfo.internet;
+            automatic         = regInfo.automatic;
+            memcpy(automaticDeviceNumber, regInfo.automaticDeviceNumber, sizeof(automaticDeviceNumber));
+            agent_types = regInfo.agent_types;
+            memcpy(kpp, regInfo.kpp, sizeof(kpp));
+            result = regInfo.result;
+        }
+    }
+
+    char organization_name[256]     = {0}; // Наименование организации
+    char calculation_address[256]   = {0}; // Адрес расчётов
+    char calculation_place[256]     = {0}; // Место расчётов
+    char organization_inn[16]       = {0}; // ИНН организации
+    char kkt_reg_num[20]            = {0}; // Регистрационный номер ККТ
+    char ofd_name[256]              = {0}; // ОФД, Наименование
+    char ofd_server_address[256]    = {0}; // ОФД, Адрес сервера
+    int  ofd_server_port            =   0; // ОФД, Порт сервера
+    char ofd_inn[16]                = {0}; // ОФД, ИНН
+    char check_receipt_address[256] = {0}; // ОФД, Адрес проверки чека
+    bool isAutonomicMode          = false; // Автономный режим включен
+    unsigned char tax_systems       =   0; // Тип системы налогообложения
+    char senderEmail[256]           = {0}; // Адрес отправителя чека
+    bool encryption_sign        = false; // Признак шифрования
+    bool excisable_sign         = false; // Признак подакцизного товара
+    bool clc_services_sign      = false; // Признак расчёта за услуги
+    bool gambling_sign          = false; // Признак проведения азартных игр
+    bool lottery_sign           = false; // Признак проведения лотереи
+    bool paying_agent_sign      = false; // Признак платёжного агента
+    bool bso                    = false; // БСО
+    bool internet               = false; // ККТ для интернет
+    bool automatic              = false; // Автоматический режим
+    char automaticDeviceNumber[256] = {0};  // Номер автомата
+    unsigned char agent_types       = 0;    // Типы используемых агентов
+    char kpp[9]                     = {0};  // КПП
+    int result                      = 0;
+};
+
+class JSON
+{
+public:
+    JSON()
+    {
+        fg.reset(new FilesFG);
+        convert.reset( new Convert );
+    }
+    virtual ~JSON()
+    {
+        fg.reset(nullptr);
+        convert.reset(nullptr);
+    }
+public:
+    static int getAnswerError(string jsonResStr);
+    //=================================================================
+	//             JSON документов внесения/изъятия
+	//=================================================================
+	const string MONEY_IN  =  "MONEY_IN"; // Внесение
+	const string MONEY_OUT = "MONEY_OUT"; // Изъятие
+    //=================================================================
+    // Интерфейс общения с файлами
+    //=================================================================
+    unique_ptr<FilesFG>  fg;
+    //=================================================================
+    unique_ptr<Convert> convert;
+    static const uint8_t FS_VALIDITY_LEN = 6;
+	struct MONEY_DOCUMENT_REPORT
+	{
+		MONEY_DOCUMENT_REPORT();
+		~MONEY_DOCUMENT_REPORT();
+		uint64_t        shift, // Номер смены
+		               number; // Номер чека
+		string           date, // Дата и время (ISO8601) регистрации
+		             doc_type; // Тип документа MONEY_IN или MONEY_OUT
+		uint64_t          sum; // Сумма документа в копейках
+		string   cashier_name; // Имя кассира
+	};
+	struct MONEY_DOCUMENT_REPORT_JSON
+	{
+		MONEY_DOCUMENT_REPORT_JSON();
+		~MONEY_DOCUMENT_REPORT_JSON();
+		string           uuid;                   // Идентификатор кассы
+		vector<MONEY_DOCUMENT_REPORT> documents; // Документы внесения и изъятия
+	};
+	static int money_doc_rep_clear( MONEY_DOCUMENT_REPORT_JSON * );
+    //=================================================================
+	//             JSON документов открытия/закрытия смены
+    //=================================================================
+    static const std::string OPEN_SHIFT;        // Открытие смены
+    static const std::string CLOSE_SHIFT;       // Закрытие смены
+    static const std::string SALE;              // Приход
+    static const std::string REFUND;            // Возврат прихода
+    static const std::string OUTFLOW;           // Расход
+    static const std::string OUTFLOW_REFUND;    // Возврат расхода
+    static const std::string SALE_ANNUL;        // Приход аннулированный
+    static const std::string REFUND_ANNUL;      // Возврат аннулированный
+    static const std::string CASH;              // Наличные
+    static const std::string CASHLESS;          // Электронные
+    static const std::string PREPAID;           // Аванс
+    static const std::string CREDIT;            // Кредит
+    static const std::string CONSIDERATION;     // Встречное представление
+
+	struct PAYMENTS
+	{
+		PAYMENTS();
+		~PAYMENTS();
+        string    type; // CASH / CASHLESS
+		uint64_t count, // Количество оплат
+		           sum; // Сумма по типу оплаты
+	};
+	struct COUNTERS
+	{
+		COUNTERS();
+		~COUNTERS();
+        string                type; // SALE / REFUND/ OUTFLOW / OUTFLOW_REFUND
+		vector<PAYMENTS>  payments; // Оплаты
+		uint64_t         total_sum; // Сумма по типу документа
+	};
+	struct SHIFTS
+	{
+		SHIFTS();
+		~SHIFTS();
+		uint64_t            shift, // Номер смены
+		                   number; // Номер чека
+		string               date, // Дата и время (ISO8601) регистрации
+		                 doc_type; // OPEN_SHIFT или CLOSE_SHIFT
+		uint64_t   sum_cash_begin, // Сумма на начало смены
+		             sum_cash_end, // Сумма на конец смены (Обязательно для CLOSE_SHIFT)
+		           count_cash_out, // Количество изъятий за смену (Обязательно для CLOSE_SHIFT)
+		            count_cash_in; // Количество внесений за смену (Обязательно для CLOSE_SHIFT)
+		string       cashier_name; // Имя кассира
+		vector<COUNTERS> counters; // Счётчики
+	};
+	struct SHIFT_DOCUMENT_REPORT_JSON
+	{
+		SHIFT_DOCUMENT_REPORT_JSON();
+		~SHIFT_DOCUMENT_REPORT_JSON();
+		string uuid; // Идентификатор кассы
+		vector<SHIFTS> shifts; // документы открытия/закрытия смен
+	};
+	static int shift_doc_rep_clear( SHIFT_DOCUMENT_REPORT_JSON * );
+	//=================================================================
+    virtual int jsonParser(int type, string jsonCode, void *retStruct);
+	static string fs_table_JSON( vector<string> *fs_table );
+//	static string agents_JSON_create( AGENTS &agents );
+//	static AGENTS agents_get( string JSON );
+	static vector<string> fs_table_get( string JSON );
+
+public:
+	//&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
+    enum METHODS_VER
+    {
+        // OUT
+        HANDSHAKE_VER                = 2,
+        OFD_REGISTER_VER             = 1,
+        UPLOAD_PRODUCT               = 1, //Не используется
+        TEST_OFD_RESPONSE            = 1,
+        MONEY_DOCUMENT_REPORT_VER    = 1,
+        UNREGISTER_VER               = 1,
+        SHIFT_DOCUMENT_REPORT_VER    = 1,
+        REGISTRATION_REPORT_VER      = 1,
+        CASH_INFO_REPORT_VER         = 1,
+        POLL_VER                     = 3,
+        KKT_REGISTER_INFO_VER        = 1,
+        COUNTERS_REPORT_VER          = 1,
+        OFD_REGISTRATION_STATUS      = 1,
+        SEARCH_PRODUCT               = 1,
+        PURCHASE_DOCUMENT_REPORT_VER = 3,
+        OFD_SIGN                     = 1,
+        RELOAD_PRODUCTS_VER          = 1,
+        REQUEST_MRP_TABLES_VER       = 1,
+        REGISTER_VER                 = 1,
+
+        // IN
+        UPSERT_PRODUCT_VER           = 6,
+        EXTERNAL_PURCHASE            = 2,
+        BIND_PRODUCT_VER             = 1,
+        UPDATE_SOFTWARE              = 1,
+        DELETE_PRODUCT_VER           = 1,
+        DELETE_DISCOUNT_VER          = 1,
+        UPSERT_DISCOUNT_VER          = 1,
+        WHO_AM_I_VER                 = 1,
+        REGISTRATION_VER             = 2,
+        KEY_ACTIVATION_VER           = 1,
+        PURCHASE_DOCUMENT_RES_VER    = 1,
+        UPSERT_CASHIER_VER           = 1,
+        DELETE_CASHIER_VER           = 1,
+        UPDATE_MRP_TABLES_VER        = 1
+    };
+//===================================================================================
+//                           Типы JSON (DreamkasF <-> HUB)
+//===================================================================================
+	enum class JSON_TYPE
+	{
+		// Viki API
+        HANDSHAKE = 1,            // Установка начала обмена с Хабом
+        REGISTER,                 // Регистрация кассы в кабинете
+        UNREGISTER ,              // Отключение кассы от кабинета
+        KKT_REGISTER_INFO,        // Запрос данных для регистрации ККТ из кабинета
+        CASH_INFO_REPORT,         // Отправка расширенных данных о кассе в кабинет
+        COUNTERS_REPORT,          // Отчет о кассовых счетчиках
+        PURCHASE_DOCUMENT_REPORT, // Отправка чеков
+       // MONEY_DOCUMENT_REPORT,    // Отправка документов внесения/изъятия
+        SHIFT_DOCUMENT_REPORT,    // Отправка документов по смене (открытия/закрытия)
+        SEARCH_PRODUCT,           // Поиск товаров в кабинете
+		// Poll API
+        POLL,                     // Базовый метод траспорта
+        BIND_PRODUCT,             // Привязать локальный товар кассы к товару в кабинете
+        DELETE_PRODUCT,           // Удалить товар с кассы
+        UPSERT_PRODUCT,           // Обновить или загрузить товар на кассу
+        UPSERT_DISCOUNT,          // Загрузить скидку на кассу
+        DELETE_DISCOUNT,          // Удалить скидку с кассы
+		EXTERNAL_PURCHASE,        // Фискализировать чек из внешней системы
+		KEY_ACTIVATION            // Получить ключ активации лицензии
+	};
+//===================================================================================
+//                       Структуры JSON (DreamkasF <-> HUB)
+//===================================================================================
+//-----------------------------------------------------------------------------------
+//                                Объекты
+//-----------------------------------------------------------------------------------
+	struct JSON_VERSION
+	{
+		string                        full_version,
+                                      short_version;
+	};
+//-----------------------------------------------------------------------------------
+	struct JSON_METHOD
+	{
+		string                        name,
+                                      version;
+	};
+//-----------------------------------------------------------------------------------
+	struct JSON_CASHIER
+	{
+		string                        name,
+                                      tab_number,
+                                      inn;
+	};
+//-----------------------------------------------------------------------------------
+	struct JSON_OFD_PROVIDER
+	{
+		string                        name,
+                                      inn,
+                                      server_host,
+                                      server_port,
+                                      check_url;
+	};
+//-----------------------------------------------------------------------------------
+	struct JSON_SHOP_INFO
+	{
+		string                  	  legal_name,
+                                      shop_name,
+                                      address,
+                                      inn,
+                                      kpp;
+	};
+//-----------------------------------------------------------------------------------
+	struct JSON_KKT_REGISTRATION_INFO
+	{
+		string             			  registry_number;
+		unsigned char            	  tax_modes = 0x00;
+        bool                          autonomic = false;
+		JSON_OFD_PROVIDER             ofd_provider;
+		unsigned char                 work_mode = 0x00;
+	};
+//-----------------------------------------------------------------------------------
+	struct JSON_KKT_INFO
+	{
+		string          			  kkt_factory_number,
+                                      kkt_registry_name,
+                                      fn_number,
+                                      fn_registry_name,
+                                      ffd_version;
+		JSON_KKT_INFO()
+		{
+            kkt_registry_name = "KKT_REGISTRY_NAME"; //ec.CP866toUTF8(KKT_REGISTRY_NAME, &errP);
+		}
+	};
+//-----------------------------------------------------------------------------------
+    struct JSON_ALCOHOL_META
+	{
+        std::string alc_code;           // алкокод товара
+        std::string alc_type_code;      // код вида алкогольной продукциии
+
+        long double capacity {.00};     // ёмкость
+        long double alc_content {.00};  // содержание алкоголя
+        bool keg {false};               // признак мерности в кегах
+	};
+//-----------------------------------------------------------------------------------
+struct JSON_WEAR_PARENT_META
+{
+	string                        parentRemID,
+							       parentName;
+};
+//-----------------------------------------------------------------------------------
+	struct JSON_META
+	{
+		string                        rem_id,
+									  name,
+									  item;
+		uint64_t                      price = 0,
+                                      nds   = 0,
+                                      type  = 0;
+        double                        nds_manual = 0.0;
+        bool                          alcohol    = false;
+		JSON_ALCOHOL_META             alcohol_meta;
+        bool                          scale      = false;
+        float                         precision  = 0.0;
+		string                        measure,
+									  article,
+				                      barcode,
+                                      depart_name;
+        std::string originCountryCode;
+        std::string customEntryNum;
+        uint32_t exciseDuty = 0;
+        bool marked {false};
+		//WEAR
+		string 						  variety_name;
+		uint32_t                      sort_order = 0;
+		JSON_WEAR_PARENT_META         parent;
+	};
+//-----------------------------------------------------------------------------------
+	struct JSON_PRODUCT
+	{
+		string                        index;
+		JSON_META                     meta;
+	};
+//-----------------------------------------------------------------------------------
+	struct JSON_POSITION
+	{
+        uint64_t                      number   = 0,
+                                      quantity = 0,
+                                      price    = 0,
+				                      discount = 0;
+		JSON_PRODUCT                  product;
+	};
+//-----------------------------------------------------------------------------------
+    struct TAG_VALUE
+    {
+        enum TAG_TYPE
+        {
+            TAG_TYPE_NUMBER,
+            TAG_TYPE_STRING,
+            TAG_TYPE_BOOLEAN,
+            TAG_TYPE_MAX
+        };
+
+        TAG_VALUE()
+        {
+            type = TAG_TYPE_MAX;
+            number = uint64_t();
+            str = string();
+            boolean = bool();
+        }
+
+        explicit TAG_VALUE(const uint64_t& n)
+        {
+            type = TAG_TYPE_NUMBER;
+            number = n;
+            str = string();
+            boolean = bool();
+        }
+
+        explicit TAG_VALUE(const string& s)
+        {
+            type = TAG_TYPE_STRING;
+            number = uint64_t();
+            str = s;
+            boolean = bool();
+        }
+
+        explicit TAG_VALUE(const bool& b)
+        {
+            type = TAG_TYPE_BOOLEAN;
+            number = uint64_t();
+            str = string();
+            boolean = b;
+        }
+
+        bool operator==(const TAG_VALUE& other) const
+        {
+            bool result = (getType() == other.getType());
+            result = result && (getNumber() == other.getNumber());
+            result = result && (getString() == other.getString());
+            result = result && (getBoolean() == other.getBoolean());
+            return result;
+        }
+
+		uint64_t getNumber()    const { return number; }
+        string   getString() const    { return str; }
+        bool    getBoolean()  const   { return boolean; }
+        TAG_TYPE getType() const      { return type; }
+
+    private:
+        TAG_TYPE type;
+		uint64_t number;
+        string str;
+        bool boolean;
+    };
+
+    struct JSON_POSITION_EXTERNAL
+    {
+        std::string name;
+        std::string type;
+        uint64_t quantity {0};
+        uint64_t price    {0};
+        uint64_t total    {0};
+        uint64_t tax_sum  {0};
+        std::string tax;
+        std::string remId;
+        std::map<int32_t, TAG_VALUE> tags;
+    };
+//-----------------------------------------------------------------------------------
+	struct JSON_PAYMENT
+	{
+		string                        type;
+		uint64_t                      count = 0,
+                                      sum   = 0;
+	};
+//-----------------------------------------------------------------------------------
+	struct JSON_PURCHASE
+	{
+		string                        rem_id;
+		uint64_t                      shift  = 0,
+				                      number = 0;
+		string                        date,
+				                      type;
+		uint64_t                      total_sum             = 0,
+				                      sum_without_discounts = 0,
+				                      discount_sum          = 0;
+		JSON_CASHIER                  cashier;
+		vector <JSON_POSITION>        positions;
+		vector <JSON_PAYMENT>         payments;
+	};
+//-----------------------------------------------------------------------------------
+	struct JSON_DOCUMENT
+	{
+		uint64_t                      shift  = 0,
+				                      number = 0;
+		string                        date,
+				                      type;
+		JSON_CASHIER                  cashier;
+		uint64_t                      sum = 0;
+	};
+//-----------------------------------------------------------------------------------
+	struct JSON_COUNTERS
+	{
+		string                        type;
+		vector <JSON_PAYMENT>         payments;
+		uint64_t                      total_sum = 0;
+	};
+//-----------------------------------------------------------------------------------
+	struct JSON_SHIFT
+	{
+		uint64_t                      shift  = 0,
+				                      number = 0;
+		string                        date,
+				                      type;
+		uint64_t                      sum_cash_begin = 0,
+				                      sum_cash_end   = 0,
+				                      count_cash_out = 0,
+				                      count_cash_in  = 0;
+		JSON_CASHIER                  cashier;
+		vector <JSON_COUNTERS>        counters;
+	};
+
+//-----------------------------------------------------------------------------------
+    /**
+     * @brief The TASK_TYPE enum - типы тасок из HUB
+     */
+    enum TASK_TYPE
+    {
+        TASK_UNKNOWN = 0,
+        TASK_BIND_PRODUCT,
+        TASK_DELETE_PRODUCT,
+        TASK_UPSERT_PRODUCT,
+        TASK_UPSERT_DISCOUNT,
+        TASK_DELETE_DISCOUNT,
+        TASK_EXTERNAL_PURCHASE,
+        TASK_KEY_ACTIVATION,
+        TASK_REGISTRATION,
+        TASK_PURCHASE_DOCUMENT_RESULT,
+        TASK_UPSERT_CASHIER,
+        TASK_DELETE_CASHIER,
+        TASK_UPDATE_MRP_TABLES
+    };
+    struct JSON_TASK_RESULTS
+	{
+        JSON_TASK_RESULTS(uint64_t taskId_ = 0, int result_ = 0, string message_ = "", TASK_TYPE type_ = TASK_UNKNOWN)
+        {
+            task_id = taskId_;
+            result  = result_;
+            message = message_;
+            type    = type_;
+        }
+        uint64_t  task_id = 0;
+        int       result = 0;
+        string    message;
+        TASK_TYPE type = TASK_UNKNOWN;
+	};
+    /**
+     * @brief The PURCHASE_DOCUMENT_CODE enum коды результата фискализации чека (терминал)
+     */
+    enum class PURCHASE_DOCUMENT_CODE : uint8_t
+    {
+        UNKNOWN_ERR = 0,
+        EMPTY_DEVICE_POOL
+    };
+    const std::unordered_map<std::string, PURCHASE_DOCUMENT_CODE> purchaseCodes = {{"UNKNOWN ERROR", PURCHASE_DOCUMENT_CODE::UNKNOWN_ERR},
+                                                                                   {"E_EMPTY_DEVICE_POOL", PURCHASE_DOCUMENT_CODE::EMPTY_DEVICE_POOL}};
+    /**
+     * @brief The JSON_PURCHASE_DOCUMENT_RESULT struct результат фискализации чека
+     */
+    struct JSON_PURCHASE_DOCUMENT_RESULT
+    {
+        uint64_t taskId = 0;                                                    // номер задания
+        int status = JSON::IN_PROGRESS;                                         // статус фискализации
+        uint64_t number = 0;                                                    // номер чека
+        uint64_t shift = 0;                                                     // номер смены
+        time_t utc {0};                                                         // дата unix UTC
+        long double sum = 0.00;                                                 // сумма чека
+        std::string fn;                                                         // номер ФН
+        std::string i;
+        std::string fp;                                                         // ФПД
+        uint64_t fd = 0;                                                        // ФД
+        PURCHASE_DOCUMENT_CODE code = PURCHASE_DOCUMENT_CODE::UNKNOWN_ERR;      // код ошибки
+        std::string msg;                                                        // сообщение
+        std::string phone;                                                      // телефон покупателя
+    };
+
+//-----------------------------------------------------------------------------------
+    struct JSON_TASK
+	{
+		uint64_t                      task_id = 0;
+        TASK_TYPE                     type = TASK_UNKNOWN;
+        int                           status = JSON::WARNING;
+		string                        message;
+	};
+//-----------------------------------------------------------------------------------
+	struct JSON_BIND_PRODUCT
+	{
+		uint64_t                      task_id = 0;
+		string                        item_id,
+				                       rem_id;
+	};
+//-----------------------------------------------------------------------------------
+	struct JSON_DELETE_PRODUCT
+	{
+		uint64_t                      task_id = 0;
+		string                         rem_id;
+	};
+//-----------------------------------------------------------------------------------
+	struct JSON_UPSERT_PRODUCT
+	{
+		uint64_t                      task_id = 0;
+		JSON_PRODUCT                  product;
+	};
+//-----------------------------------------------------------------------------------
+    /**
+     * @brief The JSON_UPSERT_CASHIER struct данные добавления кассира
+     */
+    struct JSON_UPSERT_CASHIER
+    {
+        void reset()
+        {
+            task_id = 0;
+            tabNumber.clear();
+            name.clear();
+            inn.clear();
+            password.clear();
+        }
+        uint64_t task_id {0};
+        std::string tabNumber;  // табельный номер кассира
+        std::string name;       // ФИО кассира
+        std::string inn;        // ИНН
+        std::string password;   // хэш пароля
+    };
+//-----------------------------------------------------------------------------------
+    /**
+     * @brief The JSON_DELETE_CASHIER struct данные удаления кассира
+     */
+    struct JSON_DELETE_CASHIER
+    {
+        void reset()
+        {
+            task_id = 0;
+            tabNumber.clear();
+        }
+        uint64_t task_id {0};
+        std::string tabNumber;  // табельный номер кассира
+    };
+//-----------------------------------------------------------------------------------
+    struct JSON_UPDATE_MRP_TABLES
+    {
+        uint64_t task_id {0};
+//        MRP::MRPtables mrpTables;
+
+        void reset()
+        {
+            task_id = 0;
+//            mrpTables.reset();
+        }
+    };
+//-----------------------------------------------------------------------------------
+    struct JSON_KEY_ACTIVATION
+    {
+        uint64_t                      task_id = 0;
+        string                         rem_id,
+                                          key;
+    };
+//-----------------------------------------------------------------------------------
+	struct JSON_ATTRIBUTES
+	{
+		string                        phone,
+				                      email;
+	};
+	struct JSON_TAXES
+	{
+		uint64_t                      nds_no     = 0,
+				                      nds_0      = 0,
+				                      nds_10     = 0,
+				                      nds_18     = 0,
+				                      nds_10_110 = 0,
+				                      nds_18_118 = 0;
+	};
+	struct JSON_TOTAL
+	{
+		uint64_t                      total_sum = 0;
+		JSON_TAXES                    taxes;
+	};
+
+	struct JSON_EXTERNAL_PURCHASE
+	{
+        uint64_t                        task_id = 0;
+        string                          rem_id;
+        string                          tax_mode;
+        string                          type;
+        vector <JSON_POSITION_EXTERNAL> positions_ex;
+        vector <JSON_PAYMENT>           payments;
+        JSON_ATTRIBUTES                 attributes;
+        JSON_TOTAL                      total;
+        bool                            isValid = false;
+        map<int32_t, TAG_VALUE>         tags;
+	};
+    //--------------------------------------------------------
+    //--------------------------------------------------------
+    // Тип отчётов регистрации/перерегистрации
+    //--------------------------------------------------------
+    static const string             REGISTRATION;
+    static const string        CHANGE_PARAMETERS;
+    static const string CHANGE_PARAMETERS_AND_FN;
+    static const string                 CLOSE_FN;
+    enum REGISTRATION_TYPE
+    {
+        REG_NONE = 0,
+        REG_REGISTRATION,                   // Регистрация без замены ФН
+        REG_CHANGE_PARAMETERS,              // Перерегистрация без замены ФН
+        REG_CHANGE_PARAMETERS_AND_FN,       // Перерегистрация с заменой ФН
+        REG_CLOSE_FN                        // Закрыть ФН
+    };
+    enum REG_REPORT_TYPE
+    {
+        NEW_REG_REP = 1,
+        OLD_REG_REP
+    };
+
+    enum EX_REG_ERR
+    {
+        EX_REG_OK = 1,
+        EX_REG_CABINET_IS_DISCONNECTED,     // Нет связи с кабинетом
+        EX_REG_KKT_NOT_FISCAL,              // ККТ не зарегистрирована
+        EX_REG_NOT_AVAILABLE,               // Регистрация не доступна
+        EX_REG_ALREADY_FISCAL,              // ККТ уже зарегистрирована
+        EX_REG_FN_CLOSED,                   // ФН закрыт
+        EX_REG_FN_NOT_REGISTERED,           // ФН не зарегистрирован
+        EX_REG_CFG_ERROR,                   // Ошибка чтения конфигурации
+        EX_REG_DATE_ERROR,                  // Ошибка даты и времени
+        EX_REG_KKT_REG_NUM_EMPTY,           // Отсутствует РН ККТ
+        EX_REG_INVALID_KKT_REG_NUM,         // Неверный РН ККТ
+        EX_REG_KKT_INN_EMPTY,               // Отсутствует ИНН организации
+        EX_REG_ADDR_EMPTY,                  // Отсутствует адрес расчётов
+        EX_REG_REAL_ADDR_EMPTY,             // Отсутствует место расчётов
+        EX_REG_TAX_SYSTEMS_EMPTY,           // Не выбрана СНО
+        EX_REG_ORGANIZATION_NAME_EMPTY,     // Отсутствует Наименование организации
+        EX_REG_FS_ERROR,                    // Обрыв связи с ФН
+        EX_REG_CLOUD_REGISTRATION_STARTED,  // Начата облачная регистрация
+        EX_REG_SHIFT_IS_OPEN,               // Смена открыта
+        EX_REG_HAS_UNSENT_DOCUMENTS,        // Есть непереданные документы в ОФД
+        EX_REG_INFO_GET_ERR,                // Ошибка чтения данных регистрации
+        EX_REG_KKT_ERR,                     // Ошибка регистрации ФН
+        EX_REG_FS_CLOSE_ERR,                // Ошибка закрытия ФН
+        EX_REG_DATA_WRONG_FS_NUMBER,        // Неверный номер ФН
+        EX_REG_EMPTY_AUTOMAT_NUMBER,        // Пустой номер автомата
+        EX_REG_SUCCESS,                     // Регистрация/перерегистрация успешно завершена
+        EX_REG_TIME_NOT_SYNC                // Ошибка синхронизации времени
+    };
+
+
+    /**
+     * @brief The EX_TAGS enum ALARM!!!
+     *        после добавления нового тега НУЖНО добавть этот тег в TAGS_LIST
+     */
+    enum EX_TAGS
+    {
+        EX_TAGS_POSITION_SIGN_METHOD_CALC = 1214,
+        EX_TAGS_POSITION_PREPAYMENT_SUM   = 777,
+        EX_TAGS_POSITION_TYPE             = 1212,
+        EX_TAGS_POSITION_NAME             = 1030,
+        EX_TAGS_RECEIPT_ADVANCE           = 1215,
+
+        EX_TAGS_PAYMENT_AGENT_SIGN        = 1057,
+        EX_TAGS_TRANSFER_OPERATOR_PHONE   = 1075,
+        EX_TAGS_PAYMENT_AGENT_OPERATION   = 1044,
+        EX_TAGS_PAYMENT_AGENT_PHONE       = 1073,
+        EX_TAGS_TRANSFER_OPERATOR_NAME    = 1026,
+        EX_TAGS_TRANSFER_OPERATOR_ADDRESS = 1005,
+        EX_TAGS_TRANSFER_OPERATOR_INN     = 1016,
+        EX_TAGS_PROVIDER_PHONE            = 1171,   // тел. номер поставщика
+        EX_TAGS_PAYMENT_OPERATOR_PHONE    = 1074,
+        EX_TAGS_PROVIDER_NAME             = 1225,   // наименование поставщика
+        EX_TAGS_PROVIDER_INN              = 1226,   // ИНН поставщика
+
+        EX_TAGS_EXCISE_DUTY               = 1229,   // акциз
+        EX_TAGS_ORIGIN_COUNTRY_CODE       = 1230,   // код страны происхождения товара
+        EX_TAGS_CUSTOM_ENTRY_NUM          = 1231,   // номер таможенной декларации
+
+        EX_TAGS_PRODUCT_CODE              = 1162,   // код товара
+
+        EX_TAGS_BUYER_NAME                = 1227,   // наименование покупателя
+        EX_TAGS_BUYER_INN                 = 1228,   // ИНН покупателя
+
+        EX_TAGS_ADD_USER_NAME             = 1085,   // наименование дополнительного реквизита пользователя
+        EX_TAGS_ADD_USER_VALUE            = 1086,   // значение дополнительного реквизита пользователя
+
+        EX_TAGS_ADD_POS_REQ               = 1191,   // дополнительный реквизит предмета расчёта
+        EX_TAGS_ADD_REC_REQ               = 1192,   // дополнительный реквизит чека БСО
+
+        EX_TAGS_CLC_PLACE                 = 1187,   // место расчёта
+
+        EX_TAGS_MAX
+    };
+
+
+
+
+    enum SIGN_METHOD_CALC
+    {
+		SIGN_METHOD_CALC_FULL_PREPAYMENT = 1,
+		SIGN_METHOD_CALC_PREPAYMENT      = 2,
+		SIGN_METHOD_CALC_ADVANCE         = 3,
+		SIGN_METHOD_CALC_FULL_CALC       = 4,
+		SIGN_METHOD_CALC_CREDIT          = 5,
+		SIGN_METHOD_CALC_FULL_CREDIT     = 6,
+		SIGN_METHOD_CALC_PAY_CREDIT      = 7
+    };
+
+    std::vector<EX_TAGS> TAGS_POSITION_LIST = { EX_TAGS_POSITION_SIGN_METHOD_CALC,
+                                        EX_TAGS_POSITION_PREPAYMENT_SUM,
+                                        EX_TAGS_POSITION_TYPE,
+                                        EX_TAGS_POSITION_NAME,
+                                        EX_TAGS_PAYMENT_AGENT_SIGN,
+                                        EX_TAGS_TRANSFER_OPERATOR_PHONE,
+                                        EX_TAGS_PAYMENT_AGENT_OPERATION,
+                                        EX_TAGS_PAYMENT_AGENT_PHONE,
+                                        EX_TAGS_TRANSFER_OPERATOR_NAME,
+                                        EX_TAGS_TRANSFER_OPERATOR_ADDRESS,
+                                        EX_TAGS_TRANSFER_OPERATOR_INN,
+                                        EX_TAGS_PROVIDER_PHONE,
+                                        EX_TAGS_PAYMENT_OPERATOR_PHONE,
+                                        EX_TAGS_PROVIDER_NAME,
+                                        EX_TAGS_PROVIDER_INN,
+                                        EX_TAGS_EXCISE_DUTY,
+                                        EX_TAGS_ORIGIN_COUNTRY_CODE,
+                                        EX_TAGS_CUSTOM_ENTRY_NUM,
+                                        EX_TAGS_PRODUCT_CODE,
+                                        EX_TAGS_ADD_POS_REQ};
+
+    vector<EX_TAGS> TAGS_RECEIPT_LIST  = { EX_TAGS_RECEIPT_ADVANCE,
+                                        EX_TAGS_PAYMENT_AGENT_SIGN,
+                                        EX_TAGS_TRANSFER_OPERATOR_PHONE,
+                                        EX_TAGS_PAYMENT_AGENT_OPERATION,
+                                        EX_TAGS_PAYMENT_AGENT_PHONE,
+                                        EX_TAGS_TRANSFER_OPERATOR_NAME,
+                                        EX_TAGS_TRANSFER_OPERATOR_ADDRESS,
+                                        EX_TAGS_TRANSFER_OPERATOR_INN,
+                                        EX_TAGS_PROVIDER_PHONE,
+                                        EX_TAGS_PROVIDER_NAME,
+                                        EX_TAGS_PAYMENT_OPERATOR_PHONE,
+                                        EX_TAGS_PROVIDER_INN,
+                                        EX_TAGS_BUYER_NAME,
+                                        EX_TAGS_BUYER_INN,
+                                        EX_TAGS_ADD_USER_NAME,
+                                        EX_TAGS_ADD_USER_VALUE,
+                                        EX_TAGS_ADD_REC_REQ,
+                                        EX_TAGS_CLC_PLACE};
+	//--------------------------------------------------------
+    // Структура задания регистрации/перерегистрации
+    //--------------------------------------------------------
+    struct JSON_REGISTRATION
+    {
+        uint64_t          taskId =        0; // ID задания
+        REGISTRATION_TYPE   type = REG_NONE; // Тип отчёта
+        string                  cashierName; // Имя кассира
+        string                   cashierInn; // ИНН кассира
+        string                     fnNumber; // Номер ФН
+    };
+    //--------------------------------------------------------
+    //--------------------------------------------------------
+    // Структура JSON при запросе отправки лога
+    //--------------------------------------------------------
+    struct JSON_LOGS
+    {
+        string       url;   // URL для заливки файла лога
+        string      ssuk;   // имя файла лога
+        string        id;   // номер лога для ТП
+        uint32_t del = 0;   // время жизни в секундах
+    };
+
+    /**
+     * @brief The JSON_IMAGE struct - структура данных для отправки "образа системы"
+     */
+    struct JSON_IMAGE
+    {
+        string url;   // URL для заливки файла
+        string ssuk;
+
+        string uuid;
+        string fnNumber;
+        string urlDonwload;
+    };
+
+//-----------------------------------------------------------------------------------
+    // Загрузка скидок на кассу
+
+    struct JSON_UPSDISC_RESULT
+    {
+        uint32_t type = 0;
+        string  value;
+    };
+
+    struct JSON_UPSDISC_PRODUCT
+    {
+        string rem_id;
+    };
+
+    struct JSON_UPSERT_DISCOUNT
+    {
+        uint64_t   task_id = 0;
+
+        string      rem_id;
+        string        name;
+        uint32_t      mode = 0;
+        time_t  start_time = 0;
+        time_t    end_time = 0;
+
+        JSON_UPSDISC_RESULT result;
+        vector<JSON_UPSDISC_PRODUCT> products;
+    };
+
+    struct JSON_DELETE_DISCOUNT
+    {
+        uint64_t task_id = 0;
+
+        string rem_id;
+    };
+
+//-----------------------------------------------------------------------------------
+//                        Установка начала обмена с Хабом
+//-----------------------------------------------------------------------------------
+	struct JSON_HANDSHAKE
+	{
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+		// Выходные данные
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+		struct REQUEST
+		{
+			string                uuid;
+			JSON_VERSION          version;
+			// Поддерживаемые методы и их верии
+
+			vector <JSON_METHOD>  out,
+					              in;
+		}request;
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		// Входные данные
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		struct RESPONSE
+		{
+			int                result = 0;
+		}response;
+	};
+//-----------------------------------------------------------------------------------
+//                        Регистрация кассы в кабинете
+//-----------------------------------------------------------------------------------
+	struct JSON_REGISTER
+	{
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+		// Выходные данные
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+		struct REQUEST
+		{
+            std::string uuid;
+            std::string model;
+            std::string readable_model;
+            std::string pin;
+		}request;
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		// Входные данные
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		struct RESPONSE
+		{
+            void reset()
+            {
+                result = 0;
+                message.clear();
+                owner.clear();
+                kktName.clear();
+                shopName.clear();
+                displayInn.clear();
+                displayCompany.clear();
+                goodsCount = 0;
+            }
+            int result {0};
+            uint64_t goodsCount {0};
+            std::string owner;
+            std::string kktName;
+            std::string shopName;
+            std::string displayInn;
+            std::string displayCompany;
+            std::string message;
+		}response;
+	};
+//-----------------------------------------------------------------------------------
+//                        Отключение кассы от кабинета
+//-----------------------------------------------------------------------------------
+	struct JSON_UNREGISTER
+	{
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+		// Выходные данные
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+		struct REQUEST
+		{
+			string            uuid;
+		}request;
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		// Входные данные
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		struct RESPONSE
+		{
+			int             result = 0;
+		}response;
+	};
+//-----------------------------------------------------------------------------------
+//                  Запрос данных для регистрации ККТ из кабинета
+//-----------------------------------------------------------------------------------
+	struct JSON_KKT_REGISTER_INFO
+	{
+
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+		// Выходные данные
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+		struct REQUEST
+		{
+			string                     uuid;
+		}request;
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		// Входные данные
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		struct RESPONSE
+		{
+			string                     result;
+			JSON_SHOP_INFO             shop_info;
+			JSON_KKT_REGISTRATION_INFO kkt_registration_info;
+		}response;
+	};
+//-----------------------------------------------------------------------------------
+//                  Отправка расширенных данных о кассе в кабинет
+//-----------------------------------------------------------------------------------
+	struct JSON_CASH_INFO_REPORT
+	{
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+		// Выходные данные
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+		struct REQUEST
+		{
+			string                     uuid;
+			JSON_SHOP_INFO             shop_info;
+			JSON_KKT_INFO              kkt_info;
+			JSON_KKT_REGISTRATION_INFO kkt_registration_info;
+
+			string                     jacarta_expire_date;
+			bool                       is_fn;
+			string                     kkt_expire_date,
+					                   local_time;
+		}request;
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		// Входные данные
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		struct RESPONSE
+		{
+			int                         result = 0;
+		}response;
+	};
+//-----------------------------------------------------------------------------------
+//                          Отчет о кассовых счетчиках
+//-----------------------------------------------------------------------------------
+	struct JSON_COUNTERS_REPORT
+	{
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+		// Выходные данные
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+		struct REQUEST
+		{
+			string                      uuid;
+			int64_t                     cash     = 0,
+					                    cashless = 0,
+					                    receipts = 0,
+					                     balance = 0;
+		}request;
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		// Входные данные
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		struct RESPONSE
+		{
+			int                           result = 0;
+		}response;
+	};
+//-----------------------------------------------------------------------------------
+//                          Отправка чеков
+//-----------------------------------------------------------------------------------
+	struct JSON_PURCHASE_DOCUMENT_REPORT
+	{
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+		// Выходные данные
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+		struct REQUEST
+		{
+			string                      uuid;
+			vector <JSON_PURCHASE>      purchases;
+		}request;
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		// Входные данные
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		struct RESPONSE
+		{
+			int                            result = 0;
+		}response;
+	};
+//-----------------------------------------------------------------------------------
+//                  Отправка документов внесения/изъятия
+//-----------------------------------------------------------------------------------
+	struct JSON_MONEY_DOCUMENT_REPORT
+	{
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+		// Выходные данные
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+		struct REQUEST
+		{
+			string                      uuid;
+			vector <JSON_DOCUMENT>      documents;
+		}request;
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		// Входные данные
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		struct RESPONSE
+		{
+			int                            result = 0;
+		}response;
+	};
+//-----------------------------------------------------------------------------------
+//                 Отправка документов по смене (открытия/закрытия)
+//-----------------------------------------------------------------------------------
+	struct JSON_SHIFT_DOCUMENT_REPORT
+	{
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+		// Выходные данные
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+		struct REQUEST
+		{
+			string                      uuid;
+			vector <JSON_SHIFT>         shifts;
+		}request;
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		// Входные данные
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		struct RESPONSE
+		{
+			int                         result = 0;
+		}response;
+	};
+//-----------------------------------------------------------------------------------
+//                      Поиск товаров в кабинете
+//-----------------------------------------------------------------------------------
+	struct JSON_SEARCH_PRODUCT
+	{
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+		// Выходные данные
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+		struct REQUEST
+		{
+			string                      uuid,
+					                    barcode;
+		}request;
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		// Входные данные
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		struct RESPONSE
+		{
+			vector <JSON_PRODUCT>       products;
+		}response;
+	};
+//===================================================================================
+//===================================================================================
+//===================================================================================
+//                             Облачный КЭП
+//===================================================================================
+//-----------------------------------------------------------------------------------
+//                 Регистрация ККТ в ОФД и ФНС Синхронный запрос
+//-----------------------------------------------------------------------------------
+    struct JSON_OFD_REGISTER
+	{
+		JSON_OFD_REGISTER();
+		~JSON_OFD_REGISTER();
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+		// Выходные данные
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+        string                        uuid; // UUID
+		// shop_info
+		string                   shop_name, // Наименование магазина
+			                   realAddress, // Адрес расчётов
+                          organization_inn, // ИНН
+                                       pin, // Эл. адрес
+			                         phone, // Телефон
+                               org_fns_num; // ФНС организации
+		// kkt_info
+		string          kkt_factory_number, // ЗН ККТ
+			             kkt_registry_name, // Наименование продукта (ККТ)
+			                     fn_number; // ФН
+		// kkt_registration_info
+		bool             paying_agent_sign; // признак платёжного агента
+		unsigned char            tax_modes, // СНО
+                                 kkt_signs, // Режим работы ККТ
+		                     add_kkt_signs; // Дополнительные признаки работы ККТ
+        string                 kkt_fns_num; // № ФНС ККТ
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		// Входные данные
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+        string                  HUB_result, // Ответ HUB
+		                        OFD_result, // Ответ ОФД
+		                                    // OK             Документ принят, требуется подписать
+                                            //                через облачную подпись (отправить код из смс)
+                                            // NO_CLOUD_SIGN  У пользователя нет облачной подписи, необходимо
+                                            //                выполнить регистрацию в обычном режиме
+                                            // ERROR          Ошибка в введеных данных, расшифровка в поле error_message"
+		                     error_message; // Расшифровка ошибки
+	};
+    // Создание структуры JSON_OFD_REGISTER
+    static int JSON_OFDRegisterCreate( Config *, JSON_OFD_REGISTER * );
+//-----------------------------------------------------------------------------------
+//             Получение статуса регистрации в ОФД Синхронный запрос
+//-----------------------------------------------------------------------------------
+	struct JSON_OFD_REGISTRATION_STATUS
+	{
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+		// Выходные данные
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+        string            uuid; // UUID
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		// Входные данные
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+        string      HUB_result, // Ответ HUB
+		                status, // Статус регистрации в ОФД
+		                        // WAITING	        Заявление/отчет о регистрации обрабатывается в ФНС, касса должна ждать
+		                        // REGISTERED	    Касса зарегистрирована, отчет о регистрации получен ОФД и подписан.
+		                        //                  Больше ничего делать не требуется
+		                        // NEED_REPORT	    Заявление получено и подписано, выдан РНМ (kkt_registration_info/registry_number).
+		                        //                  Необходимо напечатать отчет о регистрации (если еще не напечатан),
+		                        //                  отправить его в ОФД и ждать смены статуса.
+		                        // NEED_CLOUD_SIGN	Заявление на регистрацию/отчет о регистрации приняты,
+		                        //                  требуется подписать через облачную подпись (отправить код из смс)
+		                        // NOT_REGISTERED	Касса не зарегистрирована в ОФД. Необходимо выполнить ofd_register
+		                        // ERROR	        Ошибка, расшифровка в поле error_message".
+		                        //                  Необходимо заново выполнить ofd_register
+		         error_message; // Расшифровка ошибки
+		// kkt_registration_info
+		string registry_number; // РН ККТ
+	};
+    // Создание структуры JSON_OFD_REGISTRATION_STATUS
+    static int JSON_OFDRegistrationStatusCreate( Config *, JSON_OFD_REGISTRATION_STATUS * );
+//-----------------------------------------------------------------------------------
+//   Подписать документ облачной подписью (отправка кода из СМС) Синхронный запрос
+//-----------------------------------------------------------------------------------
+	struct JSON_OFD_SIGN
+	{
+		JSON_OFD_SIGN();
+		~JSON_OFD_SIGN();
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+		// Выходные данные
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+        string          uuid, // UUID
+		                code; // Код из СМС
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		// Входные данные
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+        string    HUB_result, // Ответ HUB
+		          OFD_result, // Ответ ОФД
+		       error_message; // Расшифровка ошибки
+	};
+    // Создание структуры JSON_OFD_SIGN
+    static int JSON_OFD_Sign( Config *, string, JSON_OFD_SIGN * );
+    //===================================================================================
+//===================================================================================
+//===================================================================================
+//-----------------------------------------------------------------------------------
+//                          Базовый метод траспорта
+//-----------------------------------------------------------------------------------
+    struct TASK_DATA
+    {
+        std::vector <JSON::JSON_TASK> tasks;
+
+        std::vector <JSON::JSON_BIND_PRODUCT> bind_products;
+        std::vector <JSON::JSON_DELETE_PRODUCT> delete_products;
+        std::vector <JSON::JSON_UPSERT_PRODUCT> upsert_products;
+        std::vector <JSON::JSON_UPSERT_DISCOUNT> upsert_discounts;
+        std::vector <JSON::JSON_DELETE_DISCOUNT> delete_discounts;
+        JSON_EXTERNAL_PURCHASE external_purchase;
+        std::vector<JSON::JSON_EXTERNAL_PURCHASE> external_purchases;
+        std::vector <JSON::JSON_REGISTRATION> registrations;
+        JSON_KEY_ACTIVATION key_activation;
+        std::vector<JSON_PURCHASE_DOCUMENT_RESULT> purchaseResults;
+        std::vector<JSON_UPSERT_CASHIER> upsertCashiers;
+        std::vector<JSON_DELETE_CASHIER> deleteCashiers;
+        std::vector<JSON_UPDATE_MRP_TABLES> updateMRPtables;
+    };
+    //===============================================================================
+    struct JSON_POLL_
+	{
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+		// Выходные данные
+		//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+		struct REQUEST
+		{
+			string                          uuid;
+			vector <JSON_TASK_RESULTS>      task_results;
+		}request;
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		// Входные данные
+		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		struct RESPONSE
+		{
+			vector <JSON_TASK>              tasks;
+            TASK_DATA                       task_data;
+            int                             result = 1;
+		}response;
+	};
+    static const int POLL_RESPONSE     =      1,
+                     POLL_REQUEST      =      2;
+    static const uint8_t OFFSET_OUTPUT =   0x04;
+    /**
+     * @brief The STATISTICS_ERR enum - ошибки при формировании статистики
+     */
+    enum STAT_ERR
+    {
+        STAT_ERR_SUCCESS = 0,
+        STAT_ERR_JSON_COMPLITE = 1,
+        STAT_ERR_NULL_PTR = -1,
+        STAT_ERR_EMPTY_JSON = -2,
+        STAT_ERR_SEND_FAILED = -3,
+        STAT_ERR_HUB_ERROR = -4,
+        STAT_ERR_EMPTY_UUID = -5
+    };
+    //===============================================================================
+    //                              Методы очистки
+    //===============================================================================
+    static void json_poll_clear          ( JSON_POLL_                          *json_poll            );
+    static void json_poll_clear          ( JSON_POLL_                          *json_poll, int field );
+    static void task_data_clear          ( TASK_DATA                           *task_data            );
+    static void task_clear               ( JSON_TASK                           *task                 );
+    static void tasks_clear              ( vector<JSON_TASK>                   *tasks                );
+    static void task_result_clear        ( JSON_TASK_RESULTS                   *task_result          );
+    static void task_results_clear       ( vector<JSON_TASK_RESULTS>           *task_results         );
+    static void key_activation_clear     ( JSON_KEY_ACTIVATION                 *key_activation       );
+    static void upsert_product_clear     ( JSON_UPSERT_PRODUCT                 *upsert_product       );
+    static void upsert_products_clear    ( vector<JSON_UPSERT_PRODUCT>         *upsert_products      );
+    static void bind_product_clear       ( JSON_BIND_PRODUCT                   *bind_product         );
+    static void bind_products_clear      ( vector<JSON_BIND_PRODUCT>           *bind_products        );
+    static void delete_product_clear     ( JSON_DELETE_PRODUCT                 *delete_product       );
+    static void delete_products_clear    ( vector<JSON_DELETE_PRODUCT>         *delete_products      );
+    static void attributes_clear         ( JSON_ATTRIBUTES                     *attributes           );
+    static void taxes_clear              ( JSON_TAXES                          *taxes                );
+    static void total_clear              ( JSON_TOTAL                          *total                );
+    static void payment_clear            ( JSON_PAYMENT                        *payment              );
+    static void payments_clear           ( vector<JSON_PAYMENT>                *payments             );
+    static void position_clear           ( JSON_POSITION                       *position             );
+    static void positions_clear          ( vector<JSON_POSITION>               *positions            );
+    static void position_ex_clear        ( JSON_POSITION_EXTERNAL              *position_ex          );
+    static void positions_ex_clear       ( vector<JSON_POSITION_EXTERNAL>      *positions_ex         );
+    static void external_purchase_clear  ( JSON_EXTERNAL_PURCHASE              *external_purchase    );
+    static void product_clear            ( JSON_PRODUCT                        *product              );
+    static void meta_clear               ( JSON_META                           *meta                 );
+    static void upsert_discount_clear    ( JSON_UPSERT_DISCOUNT&                                     );
+    static void delete_discount_clear    ( JSON_DELETE_DISCOUNT&                                     );
+    //===============================================================================
+    static const int      IN_PROGRESS = -1,
+                          SUCCESS      =  0,
+                          WARNING      =  1,
+                          ERROR        =  2;
+    static JSON_TASK*     NextTaskGet( vector<JSON_TASK> *tasks );
+	static int jsonPreAnalizeErrors(string jsonCode);
+//===============================================================================
+//                Методы логирования структур и объектов JSON
+//===============================================================================
+    static int product_display     ( JSON_PRODUCT                   *product            );
+    static int attributes_display  ( JSON_ATTRIBUTES                *attributes         );
+    static int taxes_display       ( JSON_TAXES                     *taxes              );
+    static int position_display    ( JSON_POSITION                  *position           );
+    static int position_ex_display ( JSON_POSITION_EXTERNAL         *position_ex        );
+    static int payment_display     ( JSON_PAYMENT                   *payment            );
+    static int total_display       ( JSON_TOTAL                     *total              );
+    //-------------------------------------------------------------------------
+    static int task_display      ( JSON_TASK                      *task               );
+	static int tasks_display     ( vector<JSON_TASK>              *tasks              );
+    //-------------------------------------------------------------------------
+    static int task_display      ( JSON_BIND_PRODUCT              *bind_product       );
+	static int tasks_display     ( vector<JSON_BIND_PRODUCT>      *bind_products      );
+    //-------------------------------------------------------------------------
+    static int task_display      ( JSON_DELETE_PRODUCT            *delete_product     );
+	static int tasks_display     ( vector<JSON_DELETE_PRODUCT>    *delete_products    );
+    //-------------------------------------------------------------------------
+    static int task_display      ( JSON_UPSERT_PRODUCT            *upsert_product     );
+	static int tasks_display     ( vector<JSON_UPSERT_PRODUCT>    *upsert_products    );
+    //-------------------------------------------------------------------------
+    static int task_display      ( JSON_EXTERNAL_PURCHASE         *external_purchase  );
+    static int all_tasks_display ( TASK_DATA                      *task_data          );
+	//===============================================================================
+	//                            Парсер JSON
+	//===============================================================================
+    virtual int jsonPollParser( string JSON, JSON_POLL_                             * );
+    static string jsonPollStrCreate( JSON_POLL_                                     * );
+    static int jsonRegCabinetParser(string JSON, JSON_REGISTER& jsonCabRegister);
+	                           //      Парсер ответа на заявление облачной регистрации
+	static int        jsonOFDRegisterParser( string,            JSON_OFD_REGISTER * );
+	                          // Парсер ответа на запрос статуса облачной регистрации
+	static int jsonRegistrationStatusParser( string, JSON_OFD_REGISTRATION_STATUS * );
+	                          //                         Парсер ответа на СМС-подпись
+	static int            jsonOfdSignParser( string,                JSON_OFD_SIGN * );
+    static int      jsonSearchProductParser( string JSON, JSON_PRODUCT &product     );
+    static int               jsonLogsParser( string JSON,                JSON_LOGS& );
+
+	// Проверка на наличие костылей со скидками во внешних чеках
+	static bool             isValidPosition( string   	     name,
+											 string   	     type,
+											 uint64_t 	 quantity,
+											 uint64_t 	    price,
+											 uint64_t 	    total );
+//&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
+    struct UpdateInfo
+    {
+        UpdateInfo(const string &status_, const string &version_) :
+                   status(status_), version(version_) {}
+
+        const string status;
+        const string version;
+    };
+    virtual STAT_ERR jsonCfgCreate(Config *cfg, const License &license, const UpdateInfo &updateInfo, string &);
+	static string addToJSON(string name, string   data, bool isLast = false);
+	static string addToJSON(string name, bool     data, bool isLast = false);
+	static string addToJSON(string name, int      data, bool isLast = false);
+    static string addToJSON(int      data, bool isLast = false);
+    static string addToJSON(double   data, bool isLast = false);
+	static string addToJSON(string name, uint64_t data, bool isLast = false);
+    static string addToJSON(string name, double data, bool isLast = false);
+    static string addStructToJSON(string name, string data, bool isLast = false);
+    static string addStructToJSON(string data, bool isLast = false);
+    static string getStageName(KKT_STAGE stage);
+
+	struct POLL_PARSE_ERRORS
+	{
+		enum ERRORS: int
+		{
+            BAD_RESULT                      = -0x01,
+            OK                              =  0x00,
+            BAD_JSON                        =  0xAA,
+            BAD_UPSERT                      =  0xB1,
+            BAD_BIND                        =  0xB2,
+            BAD_DELETE                      =  0xB3,
+            BAD_ACTIVATE                    =  0xB4,
+            BAD_EXTERNAL_PURCHASE           =  0xAB,
+            EXEPTION_JSON                   =  0xB5,
+            BAD_UPSERT_DISCOUNT             =  0xB6,
+            BAD_DELETE_DISCOUNT             =  0xB7,
+            BAD_PURCHASE_DOCUMENT_RESULT    =  0xB8,
+            BAD_UPDATE_MRP_TABLES           =  0xB9,
+            BAD_TASK_TYPE
+		};
+	};
+
+    enum DISCOUNT_ERR
+    {
+       DISCOUNT_ERR_SUCCESS               =  0,
+       DISCOUNT_ERR_DATA_EMPTY            = -1,
+       DISCOUNT_ERR_RESULT_EMPTY          = -2,
+       DISCOUNT_ERR_TARGET_DATA_EMPTY     = -3,
+       DISCOUNT_ERR_TARGET_PRODUCTS_EMPTY = -4,
+       DISCOUNT_ERR_NULL_PTR              = -5,
+       DISCOUNT_ERR_EMPTY_PRODUCT_REM_ID  = -6,
+       DISCOUNT_ERR_EMPTY_JSON            = -7,
+       DISCOUNT_ERR_EMPTY_MODE            = -8
+    };
+
+    enum EXTERNAL_PURCHASE_ERR
+    {
+        EXTERNAL_PURCHASE_ERR_SUCCESS                  = 0,
+        EXTERNAL_PURCHASE_ERR_DATA_EMPTY                  ,
+        EXTERNAL_PURCHASE_ERR_REM_ID_MISSING              ,
+        EXTERNAL_PURCHASE_ERR_TYPE_MISSING                ,
+        EXTERNAL_PURCHASE_ERR_POSITIONS_MISSING           ,
+        EXTERNAL_PURCHASE_ERR_PAYMENTS_MISSING            ,
+        EXTERNAL_PURCHASE_ERR_TOTAL_MISSING               ,
+        EXTERNAL_PURCHASE_ERR_TOTAL_SUM_MISSING           ,
+        EXTERNAL_PURCHASE_ERR_PAYMENTS_SUM_MISSING        ,
+        EXTERNAL_PURCHASE_ERR_POSITIONS_NAME_MISSING      ,
+        EXTERNAL_PURCHASE_ERR_POSITIONS_TYPE_MISSING      ,
+        EXTERNAL_PURCHASE_ERR_POSITIONS_QUANTITY_MISSING  ,
+        EXTERNAL_PURCHASE_ERR_POSITIONS_PRICE_MISSING     ,
+        EXTERNAL_PURCHASE_ERR_INVALID_POSITION            ,
+        EXTERNAL_PURCHASE_ERR_DATA_MISSING                ,
+        EXTERNAL_PURCHASE_ERR_TAGS_TAG                    ,
+        EXTERNAL_PURCHASE_ERR_TAGS_VALUE                  ,
+        EXTERNAL_PURCHASE_ERR_TAGS_NOT_AVAILABLE          ,
+        EXTERNAL_PURCHASE_ERR_REQUIRED_FIELD_EMPTY
+    };
+    /**
+     * @brief parseTags - парс тегов из внешнего чека
+     * @param jsonTags - json с тегами ([{"tag":1214, "value":0}, {"tag":1214, "value":1}])
+     * @param src - структура с полями |map<int32_t, TAG_VALUE> tags|
+     * @return код ошибки из EXTERNAL_PURCHASE_ERR
+     */
+    template<typename T>
+    EXTERNAL_PURCHASE_ERR parseTags(const JsonParser& jsonTags, T& src);
+    /**
+     * @brief jsonImageUploadParser - парс ссылки для отправки образа ПО
+     * @param JSON - json с url для отправки образа
+     * @return rue - если удалось рапарсить, иначе - false
+     */
+    virtual bool jsonImageUploadParser(const string &JSON, JSON_IMAGE&);
+
+    /**
+     * @brief jsonImageDownloadParser - парс ссылки для получения образа ПО
+     * @param JSON - json с url для получения образа
+     * @return rue - если удалось рапарсить, иначе - false
+     */
+    virtual bool jsonImageDownloadParser(const string &JSON, JSON_IMAGE&);
+    /**
+     * @brief parsePurchaseDocumentResult парс результата фискализации чека
+     * @param task json результата фискализации чека
+     * @param purchaseResult структура результата фискализации чека
+     * @return результат выполнения парса
+     */
+    virtual bool parsePurchaseDocumentResult(const JsonParser &task, JSON_PURCHASE_DOCUMENT_RESULT &purchaseResult) const;
+    /**
+     * @brief parseUpsertCashier парс добавления кассира
+     * @param task json
+     * @param upsertCashier данные кассира
+     * @return результат выполнения
+     */
+    virtual bool parseUpsertCashier(const JsonParser &task, JSON_UPSERT_CASHIER &upsertCashier) const;
+    /**
+     * @brief parseDeleteCashier парс удаления кассира
+     * @param task json
+     * @param deleteCashier данные кассира
+     * @return результат выполнения
+     */
+    virtual bool parseDeleteCashier(const JsonParser &task, JSON_DELETE_CASHIER &deleteCashier) const;
+    /**
+     * @brief parseUpdateMRPtables парс таблиц МРЦ алкогольной продукции
+     * @param task json
+     * @param updateMRPtables данные таблиц МРЦ алкогольной продукции
+     * @return результат выполнения
+     */
+    bool parseUpdateMRPtables(const JsonParser &task, JSON_UPDATE_MRP_TABLES &updateMRPtables) const;
+protected:
+    static bool isTaskProcessed(const uint64_t &taskId, const JSON_POLL_ &json_poll);
+
+    // Парс полл таски upsert_product
+    virtual bool parseUpsertProduct( JsonParser        jsonUpsertTask,
+                                     JSON_UPSERT_PRODUCT     &upsertStruct);
+    // Парс полл таски bind_product
+    virtual bool   parseBindProduct( const JsonParser        &jsonBindTask,
+                                     JSON_BIND_PRODUCT       &bindStruct);
+	// Парс полл таски delete_product
+    virtual bool parseDeleteProduct( const JsonParser        &jsonDelTask,
+                                     JSON_DELETE_PRODUCT     &delStruct);
+	// Парс полл таски key_activation
+    virtual bool parseActivationKey( const JsonParser        &jsonActTask,
+                                     JSON_KEY_ACTIVATION     &actStruct);
+    /**
+     * @brief parseKktRegistr - парс ответа на заппрос регистрации
+     * @param jsonAnswer - строка json с ответом от сервера
+     * @param regInfoStr - структура для заполнения данными
+     * @param regInfo - структура для заполнения данными
+     * @return код ошибки
+     */
+//    virtual int parseKktRegistr(const string &jsonAnswer, JSONKKTRegInfoStr &regInfoStr, JSONKKTRegInfo &regInfo);
+    /**
+     * @brief парс таски на внешний чек
+     * @param[in] jsonExPurchaseTask - таска с внешним чеком
+     * @param[in] exPurchaseStruct - структура внешнего чека
+     * @return true если успешно
+     */
+    virtual EXTERNAL_PURCHASE_ERR parseExternalPurchase( const JsonParser &jsonExPurchaseTask,
+                                                         JSON_EXTERNAL_PURCHASE &exPurchaseStruct );
+    /**
+     * @brief pushTags - добавить тег в вектор тегов
+     * @param tag - json с тегом ({"tag":1214, "value":0})
+     * @param src - структура с полями |map<int32_t, TAG_VALUE> tags|
+     * @return true - если удалось рапарсить, иначе - false
+     */
+    template<typename T>
+    EXTERNAL_PURCHASE_ERR pushTags(const JsonParser& tag, T& src);
+    /**
+     * @brief parseUpsertDiscount - парс таски на добавление скидки
+     * @param jsonUpsertDiscount - json со скидкой
+     * @param upsertDiscount - структура скидки
+     * @return DISCOUNT_ERR
+     */
+    virtual DISCOUNT_ERR parseUpsertDiscount(const JsonParser &jsonUpsertDiscount, JSON_UPSERT_DISCOUNT &upsertDiscount);
+    /**
+     * @brief parseDeleteDiscount - парс таски на удаление скидки
+     * @param jsonDeleteDiscount - json со скидкой на удаление
+     * @param deleteDiscount - структура скидки на удаление
+     * @return DISCOUNT_ERR
+     */
+    virtual DISCOUNT_ERR parseDeleteDiscount(const JsonParser &jsonDeleteDiscount, JSON_DELETE_DISCOUNT &deleteDiscount);
+
+public:
+    static constexpr char TAX_DEFAULT[]   = "DEFAULT";
+    static constexpr char TAX_SIMPLE[]    = "SIMPLE";
+    static constexpr char TAX_SIMPLE_WO[] = "SIMPLE_WO";
+    static constexpr char TAX_ENVD[]      = "ENVD";
+    static constexpr char TAX_AGRICULT[]  = "AGRICULT";
+    static constexpr char TAX_PATENT[]    = "PATENT";
+
+    static constexpr char WORK_MODE_CIPHER[]     = "CIPHER";
+    static constexpr char WORK_MODE_EXCISE[]     = "EXCISE";
+    static constexpr char WORK_MODE_SERVICES[]   = "SERVICES";
+    static constexpr char WORK_MODE_GAMBLING[]   = "GAMBLING";
+    static constexpr char WORK_MODE_LOTTERY[]    = "LOTTERY";
+    static constexpr char WORK_MODE_AUTOMATIC[]  = "AUTOMATIC";
+    static constexpr char WORK_MODE_PAY_AGENTS[] = "PAY_AGENTS";
+    static constexpr char WORK_MODE_BSO[]        = "BSO";
+    static constexpr char WORK_MODE_INTERNET[]   = "INTERNET";
+
+    static constexpr char AGENT_BANK_PAY_AGENT[]     = "BANK_PAY_AGENT";
+    static constexpr char AGENT_BANK_PAY_SUB_AGENT[] = "BANK_PAY_SUB_AGENT";
+    static constexpr char AGENT_PAY_AGENT[]          = "PAY_AGENT";
+    static constexpr char AGENT_PAY_SUB_AGENT[]      = "PAY_SUB_AGENT";
+    static constexpr char AGENT_ATTORNEY[]           = "ATTORNEY";
+    static constexpr char AGENT_COMMISSIONAIRE[]     = "COMMISSIONAIRE";
+    static constexpr char AGENT_AGENT[]              = "AGENT";
+};
+
+#endif /* SRC_APPL_INCLUDE_JSON_H_ */
